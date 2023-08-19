@@ -4748,7 +4748,7 @@ var
   next: PRegExprChar; // next node
   Len: PtrInt;
   opnd, opGrpEnd: PRegExprChar;
-  no: integer;
+  no, no2: integer;
   save: PRegExprChar;
   saveCurrentGrp: integer;
   nextch: REChar;
@@ -5217,8 +5217,10 @@ begin
 
       OP_LOOP, OP_LOOPNG:
         begin // ###0.940
+          no2 := LoopStackIdx; // if we return (either backtrace, or match-completed) always return the original value
           if IsMatchingAfterLoop then
             dec(LoopStackIdx);
+          no := LoopStackIdx; // after any call to MatchPrim always restore to this value (for any access to LoopStack / or further calls to MatchPrim)
           if LoopStackIdx <= 0 then
           begin
             Error(reeLoopWithoutEntry);
@@ -5236,20 +5238,20 @@ begin
               if LoopStack[LoopStackIdx] < BracesMax then
               begin
                 Inc(LoopStack[LoopStackIdx]);
-                no := LoopStackIdx;
                 Result := MatchPrim(opnd);
-                LoopStackIdx := no;
-                if Result then
+                if Result then begin
+                  LoopStackIdx := no2;
                   Exit;
+                end;
+                LoopStackIdx := no;
                 regInput := save;
               end;
               Dec(LoopStackIdx); // Fail. May be we are too greedy? ;)
-              no := LoopStackIdx;
               savedIsMatchingAfterLoop := IsMatchingAfterLoop;
               IsMatchingAfterLoop := True;
               Result := MatchPrim(next);
               IsMatchingAfterLoop := savedIsMatchingAfterLoop;
-              LoopStackIdx := no;
+              LoopStackIdx := no2;
               if not Result then
                 regInput := save;
               Exit;
@@ -5257,36 +5259,34 @@ begin
             else
             begin
               // non-greedy - try just now
-              no := LoopStackIdx;
               savedIsMatchingAfterLoop := IsMatchingAfterLoop;
               IsMatchingAfterLoop := True;
               Result := MatchPrim(next);
               IsMatchingAfterLoop := savedIsMatchingAfterLoop;
+              if Result then begin
+                LoopStackIdx := no2;
+                Exit;
+              end;
               LoopStackIdx := no;
-              if Result then
-                Exit
-              else
-                regInput := save; // failed - move next and try again
+              regInput := save; // failed - move next and try again
               if LoopStack[LoopStackIdx] < BracesMax then
               begin
                 Inc(LoopStack[LoopStackIdx]);
-                no := LoopStackIdx;
                 Result := MatchPrim(opnd);
-                LoopStackIdx := no;
+                LoopStackIdx := no2;
                 if Result then
                   Exit;
                 regInput := save;
               end;
-              Dec(LoopStackIdx); // Failed - back up
+              LoopStackIdx := no2;
               Exit;
             end
           end
           else
           begin // first match a min_cnt times
             Inc(LoopStack[LoopStackIdx]);
-            no := LoopStackIdx;
             Result := MatchPrim(opnd);
-            LoopStackIdx := no;
+            LoopStackIdx := no2;
             if Result then
               Exit;
             Dec(LoopStack[LoopStackIdx]);

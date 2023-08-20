@@ -5295,9 +5295,9 @@ begin
               begin
                 Inc(Local.LoopInfoListPtr^.Count);
                 Result := MatchPrim(opnd);
+                Dec(Local.LoopInfoListPtr^.Count);
                 if Result then
                   Exit;
-                Dec(Local.LoopInfoListPtr^.Count);
                 regInput := save;
               end;
               CurrentLoopInfoListPtr := Local.LoopInfoListPtr^.OuterLoop;
@@ -5320,9 +5320,9 @@ begin
               begin
                 Inc(Local.LoopInfoListPtr^.Count);
                 Result := MatchPrim(opnd);
+                Dec(Local.LoopInfoListPtr^.Count);
                 if Result then
                   Exit;
-                Dec(Local.LoopInfoListPtr^.Count);
                 regInput := save;
               end;
               Exit;
@@ -5332,9 +5332,9 @@ begin
           begin // first match a min_cnt times
             Inc(Local.LoopInfoListPtr^.Count);
             Result := MatchPrim(opnd);
+            Dec(Local.LoopInfoListPtr^.Count);
             if Result then
               Exit;
-            Dec(Local.LoopInfoListPtr^.Count);
             regInput := save;
             Exit;
           end;

@@ -3006,10 +3006,19 @@ begin
       if PREOp(scan)^ = OP_CONTINUE_POS then
         regAnchored := raContinue
       else
-      if PREOp(scan)^ = OP_STAR then begin
-        longest := scan + REOpSz + RENextOffSz;
+      if (PREOp(scan)^ = OP_STAR) or (PREOp(scan)^ = OP_STARNG) or (PREOp(scan)^ = OP_STAR_POSS) then begin
+        longest := AlignToInt(scan + REOpSz + RENextOffSz);
         if PREOp(longest)^ = OP_ANY then
           regAnchored := raOnlyOnce;
+      end
+      else
+      if (PREOp(scan)^ = OP_BRACES) or (PREOp(scan)^ = OP_BRACESNG) or (PREOp(scan)^ = OP_BRACES_POSS) then begin
+        longest := AlignToInt(scan + REOpSz + RENextOffSz);
+        if (PREBracesArg(longest)^ = 0) and (PREBracesArg(longest + REBracesArgSz)^ = MaxBracesArg) then begin
+          longest := AlignToPtr(longest + REBracesArgSz + REBracesArgSz);
+          if PREOp(longest)^ = OP_ANY then
+            regAnchored := raOnlyOnce;
+        end;
       end;
 
       // If there's something expensive in the r.e., find the longest

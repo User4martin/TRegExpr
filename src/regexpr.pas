@@ -4818,7 +4818,7 @@ var
   Len: PtrInt;
   opnd, opGrpEnd: PRegExprChar;
   no: integer;
-  save, InpStart: PRegExprChar;
+  save: PRegExprChar;
   saveCurrentGrp: integer;
   nextch: REChar;
   BracesMin, BracesMax: integer;
@@ -4835,10 +4835,15 @@ var
         LoopInfoListPtr: POpLoopInfo;
       );
       {$ENDIF}
+      OP_LOOKAHEAD, OP_LOOKBEHIND: (
+        IsNegativeLook: boolean;
+        LookAroundInfo: TLookAroundInfo;
+        InpStart: PRegExprChar; // only OP_LOOKBEHIND
+      );
+      OP_LOOKAHEAD_END, OP_LOOKBEHIND_END: (
+        LookAroundInfoPtr: PLookAroundInfo;
+      );
   end;
-  IsNegativeLook: boolean;
-  LookAroundInfo: TLookAroundInfo;
-  LookAroundInfoPtr: PLookAroundInfo;
 begin
   Result := False;
   {
@@ -5247,29 +5252,29 @@ begin
 
       OP_LOOKAHEAD, OP_LOOKAHEAD_NEG:
         begin
-          IsNegativeLook := (scan^ = OP_LOOKAHEAD_NEG);
+          Local.IsNegativeLook := (scan^ = OP_LOOKAHEAD_NEG);
 
-          LookAroundInfo.InputPos := regInput;
-          LookAroundInfo.IsNegative := IsNegativeLook;
-          LookAroundInfo.HasMatchedToEnd := False;
-          LookAroundInfo.IsBackTracking := False;
-          LookAroundInfo.OuterInfo := LookAroundInfoList;
-          LookAroundInfo.savedInputCurrentEnd := fInputCurrentEnd;
-          LookAroundInfoList := @LookAroundInfo;
+          Local.LookAroundInfo.InputPos := regInput;
+          Local.LookAroundInfo.IsNegative := Local.IsNegativeLook;
+          Local.LookAroundInfo.HasMatchedToEnd := False;
+          Local.LookAroundInfo.IsBackTracking := False;
+          Local.LookAroundInfo.OuterInfo := LookAroundInfoList;
+          Local.LookAroundInfo.savedInputCurrentEnd := fInputCurrentEnd;
+          LookAroundInfoList := @Local.LookAroundInfo;
           fInputCurrentEnd := fInputEnd;
 
           scan := AlignToPtr(scan + 1) + SizeOf(TRENextOff);
           Result := MatchPrim(scan);
 
-          if LookAroundInfo.IsBackTracking then
+          if Local.LookAroundInfo.IsBackTracking then
             IsBacktrackingGroupAsAtom := False;
-          LookAroundInfoList := LookAroundInfo.OuterInfo;
-          fInputCurrentEnd := LookAroundInfo.savedInputCurrentEnd;
+          LookAroundInfoList := Local.LookAroundInfo.OuterInfo;
+          fInputCurrentEnd := Local.LookAroundInfo.savedInputCurrentEnd;
 
-          if IsNegativeLook then begin
-            Result := not LookAroundInfo.HasMatchedToEnd;
+          if Local.IsNegativeLook then begin
+            Result := not Local.LookAroundInfo.HasMatchedToEnd;
             if Result then begin
-              regInput := LookAroundInfo.InputPos;
+              regInput := Local.LookAroundInfo.InputPos;
               next := AlignToPtr(next + 1) + SizeOf(TRENextOff);
               Result := MatchPrim(next);
               exit;
@@ -5277,42 +5282,42 @@ begin
           end;
 
           if not Result then
-            regInput := LookAroundInfo.InputPos;
+            regInput := Local.LookAroundInfo.InputPos;
 
           Exit;
         end;
 
       OP_LOOKBEHIND, OP_LOOKBEHIND_NEG:
         begin
-          IsNegativeLook := (scan^ = OP_LOOKBEHIND_NEG);
+          Local.IsNegativeLook := (scan^ = OP_LOOKBEHIND_NEG);
 
-          LookAroundInfo.InputPos := regInput;
-          LookAroundInfo.IsNegative := IsNegativeLook;
-          LookAroundInfo.HasMatchedToEnd := False;
-          LookAroundInfo.IsBackTracking := False;
-          LookAroundInfo.OuterInfo := LookAroundInfoList;
-          LookAroundInfo.savedInputCurrentEnd := fInputCurrentEnd;
-          LookAroundInfoList := @LookAroundInfo;
+          Local.LookAroundInfo.InputPos := regInput;
+          Local.LookAroundInfo.IsNegative := Local.IsNegativeLook;
+          Local.LookAroundInfo.HasMatchedToEnd := False;
+          Local.LookAroundInfo.IsBackTracking := False;
+          Local.LookAroundInfo.OuterInfo := LookAroundInfoList;
+          Local.LookAroundInfo.savedInputCurrentEnd := fInputCurrentEnd;
+          LookAroundInfoList := @Local.LookAroundInfo;
           fInputCurrentEnd := regInput;
 
           scan := AlignToPtr(scan + 1) + SizeOf(TRENextOff);
-          InpStart := fInputStart;
+          Local.InpStart := fInputStart;
           repeat
-            regInput := InpStart;
-            inc(InpStart);
+            regInput := Local.InpStart;
+            inc(Local.InpStart);
 
             Result := MatchPrim(scan);
-          until LookAroundInfo.HasMatchedToEnd or (InpStart > LookAroundInfo.InputPos);
+          until Local.LookAroundInfo.HasMatchedToEnd or (Local.InpStart > Local.LookAroundInfo.InputPos);
 
-          if LookAroundInfo.IsBackTracking then
+          if Local.LookAroundInfo.IsBackTracking then
             IsBacktrackingGroupAsAtom := False;
-          LookAroundInfoList := LookAroundInfo.OuterInfo;
-          fInputCurrentEnd := LookAroundInfo.savedInputCurrentEnd;
+          LookAroundInfoList := Local.LookAroundInfo.OuterInfo;
+          fInputCurrentEnd := Local.LookAroundInfo.savedInputCurrentEnd;
 
-          if IsNegativeLook then begin
-            Result := not LookAroundInfo.HasMatchedToEnd;
+          if Local.IsNegativeLook then begin
+            Result := not Local.LookAroundInfo.HasMatchedToEnd;
             if Result then begin
-              regInput := LookAroundInfo.InputPos;
+              regInput := Local.LookAroundInfo.InputPos;
               next := AlignToPtr(next + 1) + SizeOf(TRENextOff);
               Result := MatchPrim(next);
               exit;
@@ -5320,7 +5325,7 @@ begin
           end;
 
          if not Result then
-            regInput := LookAroundInfo.InputPos;
+            regInput := Local.LookAroundInfo.InputPos;
           Exit;
         end;
 
@@ -5328,20 +5333,20 @@ begin
         begin
           if LookAroundInfoList = nil then
             exit;
-          LookAroundInfoPtr := LookAroundInfoList;
-          LookAroundInfoPtr.HasMatchedToEnd := True;
+          Local.LookAroundInfoPtr := LookAroundInfoList;
+          Local.LookAroundInfoPtr.HasMatchedToEnd := True;
 
-          if not LookAroundInfoPtr^.IsNegative then begin
-            fInputCurrentEnd := LookAroundInfoPtr^.savedInputCurrentEnd;
-            regInput := LookAroundInfoPtr^.InputPos;
-            LookAroundInfoList := LookAroundInfoPtr^.OuterInfo;
+          if not Local.LookAroundInfoPtr^.IsNegative then begin
+            fInputCurrentEnd := Local.LookAroundInfoPtr^.savedInputCurrentEnd;
+            regInput := Local.LookAroundInfoPtr^.InputPos;
+            LookAroundInfoList := Local.LookAroundInfoPtr^.OuterInfo;
 
             Result := MatchPrim(next);
           end;
 
           if (not Result) and not IsBacktrackingGroupAsAtom then begin
             IsBacktrackingGroupAsAtom := True;
-            LookAroundInfoPtr.IsBackTracking := True;
+            Local.LookAroundInfoPtr.IsBackTracking := True;
           end;
           exit;
         end;
@@ -5351,23 +5356,23 @@ begin
           if LookAroundInfoList = nil then
             exit;
 
-          LookAroundInfoPtr := LookAroundInfoList;
-          if not (LookAroundInfoPtr^.InputPos = regInput) then
+          Local.LookAroundInfoPtr := LookAroundInfoList;
+          if not (Local.LookAroundInfoPtr^.InputPos = regInput) then
             exit;
 
-          LookAroundInfoPtr.HasMatchedToEnd := True;
+          Local.LookAroundInfoPtr.HasMatchedToEnd := True;
 
-          if not LookAroundInfoPtr^.IsNegative then begin
-            regInput := LookAroundInfoPtr^.InputPos;
-            fInputCurrentEnd := LookAroundInfoPtr^.savedInputCurrentEnd;
-            LookAroundInfoList := LookAroundInfoPtr^.OuterInfo;
+          if not Local.LookAroundInfoPtr^.IsNegative then begin
+            regInput := Local.LookAroundInfoPtr^.InputPos;
+            fInputCurrentEnd := Local.LookAroundInfoPtr^.savedInputCurrentEnd;
+            LookAroundInfoList := Local.LookAroundInfoPtr^.OuterInfo;
 
             Result := MatchPrim(next);
           end;
 
           if (not Result) and not IsBacktrackingGroupAsAtom then begin
             IsBacktrackingGroupAsAtom := True;
-            LookAroundInfoPtr.IsBackTracking := True;
+            Local.LookAroundInfoPtr.IsBackTracking := True;
           end;
           exit;
         end;

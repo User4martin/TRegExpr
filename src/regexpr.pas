@@ -888,7 +888,11 @@ type
   PRENextOff = ^TRENextOff;
   // used for extracting Next "pointers" from compiled r.e. //###0.933
   TREBracesArg = integer; // type of {m,n} arguments
+  TREBracesArgs = packed record
+    MinCount, MaxCount: TREBracesArg;
+  end;
   PREBracesArg = ^TREBracesArg;
+  PREBracesArgs = ^TREBracesArgs;
 
   TREGroupKind = (
     gkNormalGroup,
@@ -3020,9 +3024,7 @@ begin
       // "{0,} is the same as ".*". So the same optimization applies
       if (PREOp(scan)^ = OP_BRACES) or (PREOp(scan)^ = OP_BRACESNG) or (PREOp(scan)^ = OP_BRACES_POSS) then begin
         scanTemp := AlignToInt(scan + REOpSz + RENextOffSz);
-        if (PREBracesArg(scanTemp)^ = 0)  // BracesMinCount
-        and (PREBracesArg(scanTemp + REBracesArgSz)^ = MaxBracesArg)  // BracesMaxCount
-        then begin
+        if (PREBracesArgs(scanTemp)^.MinCount = 0) and (PREBracesArgs(scanTemp)^.MaxCount = MaxBracesArg) then begin
           scanTemp := AlignToPtr(scanTemp + REBracesArgSz + REBracesArgSz);
           if PREOp(scanTemp)^ = OP_ANY then
             regAnchored := raOnlyOnce;
@@ -3258,10 +3260,9 @@ var
     begin
       off := (Result + REOpSz + RENextOffSz) - (regCode - REOpSz - RENextOffSz);
       // back to Atom after OP_LOOPENTRY
-      PREBracesArg(AlignToInt(regCode))^ := ABracesMin;
-      Inc(regCode, REBracesArgSz);
-      PREBracesArg(AlignToInt(regCode))^ := ABracesMax;
-      Inc(regCode, REBracesArgSz);
+      PREBracesArgs(AlignToInt(regCode))^.MinCount := ABracesMin;
+      PREBracesArgs(AlignToInt(regCode))^.MaxCount := ABracesMax;
+      Inc(regCode, REBracesArgSz * 2);
       PRENextOff(AlignToPtr(regCode))^ := off;
       Inc(regCode, RENextOffSz);
       {$IFDEF DebugSynRegExpr}
@@ -3290,8 +3291,8 @@ var
     InsertOperator(TheOp, Result, REOpSz + RENextOffSz + REBracesArgSz * 2);
     if regCode <> @regDummy then
     begin
-      PREBracesArg(AlignToInt(Result + REOpSz + RENextOffSz))^ := ABracesMin;
-      PREBracesArg(AlignToInt(Result + REOpSz + RENextOffSz + REBracesArgSz))^ := ABracesMax;
+      PREBracesArgs(AlignToInt(Result + REOpSz + RENextOffSz))^.MinCount := ABracesMin;
+      PREBracesArgs(AlignToInt(Result + REOpSz + RENextOffSz))^.MaxCount := ABracesMax;
     end;
   end;
 
@@ -5322,8 +5323,8 @@ begin
             Exit;
           end;
           opnd := scan + PRENextOff(AlignToPtr(scan + REOpSz + RENextOffSz + 2 * REBracesArgSz))^;
-          BracesMin := PREBracesArg(AlignToInt(scan + REOpSz + RENextOffSz))^;
-          BracesMax := PREBracesArg(AlignToPtr(scan + REOpSz + RENextOffSz + REBracesArgSz))^;
+          BracesMin := PREBracesArgs(AlignToInt(scan + REOpSz + RENextOffSz))^.MinCount;
+          BracesMax := PREBracesArgs(AlignToPtr(scan + REOpSz + RENextOffSz))^.MaxCount;
           save := regInput;
           Local.LoopInfoListPtr := CurrentLoopInfoListPtr;
           if Local.LoopInfoListPtr^.Count >= BracesMin then

@@ -1577,7 +1577,9 @@ const
   OP_LOOKAHEAD_END = Succ(OP_LOOKAHEAD_NEG);
   OP_LOOKBEHIND = Succ(OP_LOOKAHEAD_END);
   OP_LOOKBEHIND_NEG = Succ(OP_LOOKBEHIND);
-  OP_LOOKBEHIND_END = Succ(OP_LOOKBEHIND_NEG);
+  OP_LOOKBEHIND_NG = Succ(OP_LOOKBEHIND_NEG);
+  OP_LOOKBEHIND_NG_NEG = Succ(OP_LOOKBEHIND_NG);
+  OP_LOOKBEHIND_END = Succ(OP_LOOKBEHIND_NG_NEG);
 
 
   OP_SUBCALL = Succ(OP_LOOKBEHIND_END); // Call of subroutine; OP_SUBCALL+i is for group i
@@ -2580,6 +2582,8 @@ const
   FLAG_HASWIDTH = 1; // Cannot match empty string
   FLAG_SIMPLE = 2; // Simple enough to be OP_STAR/OP_PLUS/OP_BRACES operand
   FLAG_SPECSTART = 4; // Starts with * or +
+  FLAG_LOOP = 8; // Has eithe *, + or {,n} with n>=2
+  FLAG_GREEDY = 16; // Has any greedy code
 
   {$IFDEF UnicodeRE}
   RusRangeLoLow = #$430; // 'а'
@@ -3114,7 +3118,7 @@ begin
     ret := br;
   if (FlagTemp and FLAG_HASWIDTH) = 0 then
     FlagParse := FlagParse and not FLAG_HASWIDTH;
-  FlagParse := FlagParse or FlagTemp and FLAG_SPECSTART;
+  FlagParse := FlagParse or FlagTemp and (FLAG_SPECSTART or FLAG_LOOP or FLAG_GREEDY);
   while (regParse^ = '|') do
   begin
     Inc(regParse);
@@ -3127,7 +3131,7 @@ begin
     Tail(ret, br); // OP_BRANCH -> OP_BRANCH.
     if (FlagTemp and FLAG_HASWIDTH) = 0 then
       FlagParse := FlagParse and not FLAG_HASWIDTH;
-    FlagParse := FlagParse or FlagTemp and FLAG_SPECSTART;
+    FlagParse := FlagParse or FlagTemp and (FLAG_SPECSTART or FLAG_LOOP or FLAG_GREEDY);
   end;
 
   // Make a closing node, and hook it on the end.
@@ -3190,7 +3194,7 @@ begin
       Result := nil;
       Exit;
     end;
-    FlagParse := FlagParse or FlagTemp and FLAG_HASWIDTH;
+    FlagParse := FlagParse or FlagTemp and (FLAG_HASWIDTH or FLAG_LOOP or FLAG_GREEDY);
     if chain = nil // First piece.
     then
       FlagParse := FlagParse or FlagTemp and FLAG_SPECSTART
@@ -3320,7 +3324,7 @@ begin
   case op of
     '*':
       begin
-        FlagParse := FLAG_WORST or FLAG_SPECSTART;
+        FlagParse := FLAG_WORST or FLAG_SPECSTART or FLAG_LOOP;
         nextch := (regParse + 1)^;
         PossessiveCh := nextch = '+';
         if PossessiveCh then
@@ -3333,6 +3337,8 @@ begin
           NonGreedyCh := nextch = '?';
           NonGreedyOp := NonGreedyCh or not fCompModifiers.G;
         end;
+        if not NonGreedyCh then
+          FlagParse := FlagParse or FLAG_GREEDY;
         if (FlagTemp and FLAG_SIMPLE) = 0 then
         begin
           if NonGreedyOp then
@@ -3362,7 +3368,7 @@ begin
       end; { of case '*' }
     '+':
       begin
-        FlagParse := FLAG_WORST or FLAG_SPECSTART or FLAG_HASWIDTH;
+        FlagParse := FLAG_WORST or FLAG_SPECSTART or FLAG_HASWIDTH or FLAG_LOOP;
         nextch := (regParse + 1)^;
         PossessiveCh := nextch = '+';
         if PossessiveCh then
@@ -3375,6 +3381,8 @@ begin
           NonGreedyCh := nextch = '?';
           NonGreedyOp := NonGreedyCh or not fCompModifiers.G;
         end;
+        if not NonGreedyCh then
+          FlagParse := FlagParse or FLAG_GREEDY;
         if (FlagTemp and FLAG_SIMPLE) = 0 then
         begin
           if NonGreedyOp then
@@ -3417,6 +3425,8 @@ begin
           NonGreedyCh := nextch = '?';
           NonGreedyOp := NonGreedyCh or not fCompModifiers.G;
         end;
+        if not NonGreedyCh then
+          FlagParse := FlagParse or FLAG_GREEDY;
         if NonGreedyOp or PossessiveCh then
         begin // ###0.940  // We emit x?? as x{0,1}?
           if (FlagTemp and FLAG_SIMPLE) = 0 then
@@ -3491,6 +3501,10 @@ begin
           NonGreedyCh := nextch = '?';
           NonGreedyOp := NonGreedyCh or not fCompModifiers.G;
         end;
+        if not NonGreedyCh then
+          FlagParse := FlagParse or FLAG_GREEDY;
+        if BracesMax >= 2 then
+          FlagParse := FlagParse or FLAG_LOOP;
         if (FlagTemp and FLAG_SIMPLE) <> 0 then
           EmitSimpleBraces(BracesMin, BracesMax, NonGreedyOp, PossessiveCh)
         else
@@ -3505,6 +3519,7 @@ begin
     // else // here we can't be
   end; { of case op }
 
+  FlagParse := FlagParse or FlagTemp and (FLAG_LOOP or FLAG_GREEDY);
   Inc(regParse);
   op := regParse^;
   if (op = '*') or (op = '+') or (op = '?') or (op = '{') then
@@ -4106,7 +4121,7 @@ begin
                 Result := nil;
                 Exit;
               end;
-              FlagParse := FlagParse or FlagTemp and (FLAG_HASWIDTH or FLAG_SPECSTART);
+              FlagParse := FlagParse or FlagTemp and (FLAG_HASWIDTH or FLAG_SPECSTART or FLAG_LOOP or FLAG_GREEDY);
             end;
 
           gkLookahead,
@@ -4117,8 +4132,8 @@ begin
               case GrpKind of
                 gkLookahead: ret := EmitNode(OP_LOOKAHEAD);
                 gkLookaheadNeg: ret := EmitNode(OP_LOOKAHEAD_NEG);
-                gkLookbehind: ret := EmitNode(OP_LOOKBEHIND);
-                gkLookbehindNeg: ret := EmitNode(OP_LOOKBEHIND_NEG);
+                gkLookbehind: ret := EmitNode(OP_LOOKBEHIND_NG);
+                gkLookbehindNeg: ret := EmitNode(OP_LOOKBEHIND_NG_NEG);
               end;
               case GrpKind of
                 gkLookahead,
@@ -4127,11 +4142,18 @@ begin
                 gkLookbehindNeg: Result := ParseReg(False, FlagTemp, True, OP_LOOKBEHIND_END);
               end;
 
+              if (FlagTemp and (FLAG_GREEDY)) = (FLAG_GREEDY) then
+                case GrpKind of
+                  gkLookbehind: PReOp(ret)^ := OP_LOOKBEHIND;
+                  gkLookbehindNeg: PReOp(ret)^ := OP_LOOKBEHIND_NEG;
+                end;
+
+
               if Result = nil then
                 Exit;
 
               Tail(ret, regLast(Result));
-              FlagParse := FlagParse or FlagTemp and (FLAG_SPECSTART);
+              FlagParse := FlagParse and not FLAG_HASWIDTH;
             end;
 
           gkNamedGroupReference:
@@ -4836,7 +4858,7 @@ var
       );
       {$ENDIF}
       OP_LOOKAHEAD, OP_LOOKBEHIND: (
-        IsNegativeLook: boolean;
+        IsNegativeLook, IsNotGreedy: boolean;
         LookAroundInfo: TLookAroundInfo;
         InpStart: PRegExprChar; // only OP_LOOKBEHIND
       );
@@ -5287,9 +5309,11 @@ begin
           Exit;
         end;
 
-      OP_LOOKBEHIND, OP_LOOKBEHIND_NEG:
+      OP_LOOKBEHIND, OP_LOOKBEHIND_NEG,
+      OP_LOOKBEHIND_NG, OP_LOOKBEHIND_NG_NEG:
         begin
-          Local.IsNegativeLook := (scan^ = OP_LOOKBEHIND_NEG);
+          Local.IsNegativeLook := (scan^ = OP_LOOKBEHIND_NEG) or (scan^ = OP_LOOKBEHIND_NG_NEG);
+          Local.IsNotGreedy := (scan^ = OP_LOOKBEHIND_NG) or (scan^ = OP_LOOKBEHIND_NG_NEG);
 
           Local.LookAroundInfo.InputPos := regInput;
           Local.LookAroundInfo.IsNegative := Local.IsNegativeLook;
@@ -5301,13 +5325,20 @@ begin
           fInputCurrentEnd := regInput;
 
           scan := AlignToPtr(scan + 1) + SizeOf(TRENextOff);
-          Local.InpStart := fInputStart;
+          if Local.IsNotGreedy then
+            Local.InpStart := regInput
+          else
+            Local.InpStart := fInputStart;
           repeat
             regInput := Local.InpStart;
-            inc(Local.InpStart);
+            if Local.IsNotGreedy then
+              dec(Local.InpStart)
+            else
+              inc(Local.InpStart);
 
             Result := MatchPrim(scan);
-          until Local.LookAroundInfo.HasMatchedToEnd or (Local.InpStart > Local.LookAroundInfo.InputPos);
+          until Local.LookAroundInfo.HasMatchedToEnd or
+            (Local.InpStart > Local.LookAroundInfo.InputPos) or (Local.InpStart < fInputStart);
 
           if Local.LookAroundInfo.IsBackTracking then
             IsBacktrackingGroupAsAtom := False;
@@ -6440,6 +6471,7 @@ begin
 
       OP_LOOKAHEAD, OP_LOOKAHEAD_NEG,
       OP_LOOKBEHIND, OP_LOOKBEHIND_NEG,
+      OP_LOOKBEHIND_NG, OP_LOOKBEHIND_NG_NEG,
       OP_LOOKAHEAD_END, OP_LOOKBEHIND_END:
         ;
 
@@ -6740,6 +6772,10 @@ begin
       Result := 'LOOKBEHIND';
     OP_LOOKBEHIND_NEG:
       Result := 'LOOKBEHIND_NEG';
+    OP_LOOKBEHIND_NG:
+      Result := 'LOOKBEHIND_NG';
+    OP_LOOKBEHIND_NG_NEG:
+      Result := 'LOOKBEHIND_NG_NEG';
     OP_LOOKAHEAD_END:
       Result := 'LOOKAHEAD_END';
     OP_LOOKBEHIND_END:

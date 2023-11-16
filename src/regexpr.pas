@@ -2738,6 +2738,8 @@ begin
   // returns True, if the 2 branches are mutally exclusive
   // OP_NOTHING leads to result=false => in case of loops with OP_BACK
   result := False;
+  if (B1 = nil) or (B2 = nil) then
+    exit;
 
   while (B1^ = OP_OPEN) or
         (B1^ = OP_OPEN_ATOMIC) or
@@ -2771,6 +2773,8 @@ begin
     if Result then // if the look ahead is exclusive, then the branch is too
       exit;
     B1 := regNext(B1);
+    if B1 = nil then
+      exit;
   end;
   if    (B1^ = OP_PLUS) or
         (B1^ = OP_PLUS_NG) or
@@ -2816,6 +2820,8 @@ begin
     if Result then // if the look ahead is exclusive, then the branch is too
       exit;
     B2 := regNext(B2);
+    if B2 = nil then
+      exit;
   end;
   if    (B2^ = OP_PLUS) or
         (B2^ = OP_PLUS_NG) or
@@ -3728,7 +3734,7 @@ function TRegExpr.ParseBranch(var FlagParse: Integer): PRegExprChar;
 // one alternative of an | operator
 // Implements the concatenation operator.
 var
-  ret, chain, latest: PRegExprChar;
+  ret, chain, latest, previous: PRegExprChar;
   FlagTemp: Integer;
 begin
   FlagTemp := 0;
@@ -3736,14 +3742,39 @@ begin
 
   ret := EmitNode(OP_BRANCH);
   chain := nil;
+  latest := nil;
   while (regParse < fRegexEnd) and (regParse^ <> '|') and (regParse^ <> ')') do
   begin
+    previous := latest;
     latest := ParsePiece(FlagTemp);
     if latest = nil then
     begin
       Result := nil;
       Exit;
     end;
+    if (PREOp(latest)^ <> OP_LOOPENTRY) and
+       (PREOp(latest)^ <> OP_BRACES) and
+       (PREOp(latest)^ <> OP_BRACES_NG) and
+       (PREOp(latest)^ <> OP_STAR) and
+       (PREOp(latest)^ <> OP_STAR_NG)
+    then
+    if previous <> nil then begin
+      case PREOp(previous)^ of
+        OP_STAR, OP_LOOP_NG: begin
+          if CompareBanches(regSucc(previous), latest) then
+            PREOp(previous)^ := OP_STAR_POSS;
+        end;
+        OP_PLUS, OP_PLUS_NG: begin
+          if CompareBanches(regSucc(previous), latest) then
+            PREOp(previous)^ := OP_PLUS_POSS;
+        end;
+        OP_BRACES, OP_BRACES_NG: begin
+          if CompareBanches(regSucc(previous)+REBracesArgSz, latest) then
+            PREOp(previous)^ := OP_BRACES_POSS;
+        end;
+      end;
+    end;
+
     FlagParse := FlagParse or FlagTemp and (FLAG_HASWIDTH or FLAG_LOOP or FLAG_GREEDY);
     if chain = nil // First piece.
     then

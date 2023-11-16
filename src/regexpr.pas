@@ -128,7 +128,7 @@ uses
     Character,
     {$ENDIF}
   {$ENDIF}
-  Classes; // TStrings in Split method
+  Classes, Math; // TStrings in Split method
 
 type
   {$IFNDEF FPC}
@@ -335,6 +335,7 @@ type
     IsBacktrackingGroupAsAtom: Boolean;  // Backtracking an entire atomic group that had matched.
     // Once the group matched it should not try any alternative matches within the group
     // If the pattern after the group fails, then the group fails (regardless of any alternative match in the group)
+    BranchUniqueDone: Boolean;
 
     GrpOpCodes: array of PRegExprChar; // pointer to opcode of group[i] (used by OP_SUBCALL*)
     GrpCount, ParsedGrpCount: Integer;
@@ -543,6 +544,8 @@ type
     // insert an operator in front of already-emitted operand
     // Means relocating the operand.
     procedure InsertOperator(op: TREOp; opnd: PRegExprChar; sz: Integer);
+
+    function CompareBanches(B1, B2: PRegExprChar): Boolean;
 
     // regular expression, i.e. main body or parenthesized thing
     function ParseReg(InBrackets: Boolean; var FlagParse: Integer): PRegExprChar;
@@ -1710,6 +1713,9 @@ const
   OP_SUBCALL = TREOp(65); // Call of subroutine; OP_SUBCALL+i is for group i
   OP_LOOP_POSS = TREOp(66); // Same as OP_LOOP but in non-greedy mode
 
+  OP_BRANCH_UNIQUE = TREOp(66);
+  OP_BRANCH_UNIQUE_DONE = TREOp(67);
+
   OP_NONE = High(TREOp);
 
   // We work with p-code through pointers, compatible with PRegExprChar.
@@ -2722,6 +2728,304 @@ begin
 end; { of procedure TRegExpr.InsertOperator
   -------------------------------------------------------------- }
 
+function TRegExpr.CompareBanches(B1, B2: PRegExprChar): Boolean;
+var
+  opnd1, opnd2: PRegExprChar;
+  Len1, Len2: LongInt;
+  s: RegExprString;
+  i: Integer;
+begin
+  // returns True, if the 2 branches are mutally exclusive
+  // OP_NOTHING leads to result=false => in case of loops with OP_BACK
+  result := False;
+
+  while (B1^ = OP_OPEN) or
+        (B1^ = OP_OPEN_ATOMIC) or
+        (B1^ = OP_LOOKAHEAD) or
+        (B1^ = OP_LOOKAHEAD_NEG) or
+        (B1^ = OP_LOOKBEHIND) or
+        (B1^ = OP_LOOKBEHIND_NEG) or
+        ( (B1^ = OP_LOOPENTRY) and (PREBracesArg(AlignToPtr(regNext(B1) + REOpSz + RENextOffSz))^ > 0) ) or
+        (B1^ = OP_COMMENT) or
+        (B1^ = OP_BOL) or
+        (B1^ = OP_CONTINUE_POS) or
+        (B1^ = OP_BOUND) or
+        (B1^ = OP_NOTBOUND)
+  do begin
+    if  (B1^ = OP_LOOKAHEAD) or (B1^ = OP_LOOKAHEAD_NEG) then begin
+      Result := CompareBanches(regSucc(B1), B2);
+      B1 := regNext(B1);
+      assert((B1^ = OP_LOOKAHEAD_END) or (B1^ = OP_LOOKBEHIND_END));
+    end
+    else
+    if  (B1^ = OP_LOOKBEHIND) or (B1^ = OP_LOOKBEHIND_NEG) then begin
+      Result := CompareBanches(regSucc(B1)+ReOpLookBehindOptionsSz, B2);
+      B1 := regNext(B1);
+      assert((B1^ = OP_LOOKAHEAD_END) or (B1^ = OP_LOOKBEHIND_END));
+    end
+    else
+    if (B1^ = OP_LOOPENTRY) then begin
+      B1 := regNext(B1);
+      assert((B1^ = OP_LOOP) or (B1^ = OP_LOOP_NG));
+    end;
+    if Result then // if the look ahead is exclusive, then the branch is too
+      exit;
+    B1 := regNext(B1);
+  end;
+  if    (B1^ = OP_PLUS) or
+        (B1^ = OP_PLUS_NG) or
+        (B1^ = OP_PLUS_POSS)
+  then
+    B1 := regSucc(B1) // should always be a char-matching OP
+  else
+  if    ( (B1^ = OP_BRACES) and (PREBracesArg(AlignToPtr(B1 + REOpSz + RENextOffSz))^ > 0) ) or
+        ( (B1^ = OP_BRACES_NG) and (PREBracesArg(AlignToPtr(B1 + REOpSz + RENextOffSz))^ > 0) ) or
+        ( (B1^ = OP_BRACES_POSS) and (PREBracesArg(AlignToPtr(B1 + REOpSz + RENextOffSz))^ > 0) )
+  then
+    B1 := regSucc(B1)+REBracesArgSz; // should always be a char-matching OP
+
+  while (B2^ = OP_OPEN) or
+        (B2^ = OP_OPEN_ATOMIC) or
+        (B2^ = OP_LOOKAHEAD) or
+        (B2^ = OP_LOOKAHEAD_NEG) or
+        (B2^ = OP_LOOKBEHIND) or
+        (B2^ = OP_LOOKBEHIND_NEG) or
+        ( (B2^ = OP_LOOPENTRY) and (PREBracesArg(AlignToPtr(regNext(B2) + REOpSz + RENextOffSz))^ > 0) ) or
+        (B2^ = OP_COMMENT) or
+        (B2^ = OP_BOL) or
+        (B2^ = OP_CONTINUE_POS) or
+        (B2^ = OP_BOUND) or
+        (B2^ = OP_NOTBOUND)
+  do begin
+    if  (B2^ = OP_LOOKAHEAD) or (B2^ = OP_LOOKAHEAD_NEG) then begin
+      Result := CompareBanches(B1, regSucc(B2));
+      B2 := regNext(B2);
+      assert((B2^ = OP_LOOKAHEAD_END) or (B2^ = OP_LOOKBEHIND_END));
+    end
+    else
+    if  (B2^ = OP_LOOKBEHIND) or (B2^ = OP_LOOKBEHIND_NEG) then begin
+      Result := CompareBanches(B1, regSucc(B2)+ReOpLookBehindOptionsSz);
+      B2 := regNext(B2);
+      assert((B2^ = OP_LOOKAHEAD_END) or (B2^ = OP_LOOKBEHIND_END));
+    end
+    else
+    if (B2^ = OP_LOOPENTRY) then begin
+      B2 := regNext(B2);
+      assert((B2^ = OP_LOOP) or (B2^ = OP_LOOP_NG));
+    end;
+    if Result then // if the look ahead is exclusive, then the branch is too
+      exit;
+    B2 := regNext(B2);
+  end;
+  if    (B2^ = OP_PLUS) or
+        (B2^ = OP_PLUS_NG) or
+        (B2^ = OP_PLUS_POSS)
+  then
+    B2 := regSucc(B2) // should always be a char-matching OP
+  else
+  if    ( (B2^ = OP_BRACES) and (PREBracesArg(AlignToPtr(B2 + REOpSz + RENextOffSz))^ > 0) ) or
+        ( (B2^ = OP_BRACES_NG) and (PREBracesArg(AlignToPtr(B2 + REOpSz + RENextOffSz))^ > 0) ) or
+        ( (B2^ = OP_BRACES_POSS) and (PREBracesArg(AlignToPtr(B2 + REOpSz + RENextOffSz))^ > 0) )
+  then
+    B2 := regSucc(B2)+REBracesArgSz; // should always be a char-matching OP
+
+
+  if (B1^ = OP_BRANCH) or (B1^ = OP_BRANCH_UNIQUE) then begin
+    while  (B1^ = OP_BRANCH) or (B1^ = OP_BRANCH_UNIQUE) do begin
+      Result := CompareBanches(regSucc(B1), B2);
+      if not Result then
+        exit;
+      B1 := regNext(B1);
+    end;
+    exit;
+  end
+  else
+  if (B2^ = OP_BRANCH) or (B2^ = OP_BRANCH_UNIQUE) then begin
+    Result := CompareBanches(B2, B1);
+    exit;
+  end;
+
+  if    (B1^ = OP_PLUS) or
+        (B1^ = OP_PLUS_NG) or
+        (B1^ = OP_PLUS_POSS)
+  then begin
+    Result := CompareBanches(regSucc(B1), B2);
+    if Result then
+      Result := CompareBanches(regNext(B1), B2);
+    exit;
+  end
+  else
+  if    ( (B1^ = OP_BRACES) and (PREBracesArg(AlignToPtr(B1 + REOpSz + RENextOffSz))^ = 0) ) or
+        ( (B1^ = OP_BRACES_NG) and (PREBracesArg(AlignToPtr(B1 + REOpSz + RENextOffSz))^ = 0) ) or
+        ( (B1^ = OP_BRACES_POSS) and (PREBracesArg(AlignToPtr(B1 + REOpSz + RENextOffSz))^ = 0) )
+  then begin
+    Result := CompareBanches(regSucc(B1)+REBracesArgSz, B2);
+    if Result then
+      Result := CompareBanches(regNext(B1), B2);
+    exit;
+  end
+  else
+  if    ( (B1^ = OP_LOOPENTRY) and (PREBracesArg(AlignToPtr(regNext(B1) + REOpSz + RENextOffSz))^ = 0) )
+  then begin
+    Result := CompareBanches(regSucc(B1)+REBracesArgSz, B2);
+    if Result then
+      Result := CompareBanches(regNext(regNext(B1)), B2);
+    exit;
+  end
+  else
+  if    (B2^ = OP_PLUS) or
+        (B2^ = OP_PLUS_NG) or
+        (B2^ = OP_PLUS_POSS) or
+        ( (B2^ = OP_BRACES) and (PREBracesArg(AlignToPtr(B2 + REOpSz + RENextOffSz))^ = 0) ) or
+        ( (B2^ = OP_BRACES_NG) and (PREBracesArg(AlignToPtr(B2 + REOpSz + RENextOffSz))^ = 0) ) or
+        ( (B2^ = OP_BRACES_POSS) and (PREBracesArg(AlignToPtr(B2 + REOpSz + RENextOffSz))^ = 0) ) or
+        ( (B2^ = OP_LOOPENTRY) and (PREBracesArg(AlignToPtr(regNext(B2) + REOpSz + RENextOffSz))^ = 0) )
+  then begin
+    Result := CompareBanches(B2, B1);
+    exit;
+  end;
+
+
+  if (B1^ = OP_EXACTLY) or (B1^ = OP_EXACTLY_CI) then begin
+    opnd1 := B1 + REOpSz + RENextOffSz; // OPERAND
+    Len1 := PLongInt(opnd1)^;
+    inc(opnd1, RENumberSz);
+  end;
+  if (B2^ = OP_EXACTLY) or (B2^ = OP_EXACTLY_CI) then begin
+    opnd2 := B2 + REOpSz + RENextOffSz; // OPERAND
+    Len2 := PLongInt(opnd2)^;
+    inc(opnd2, RENumberSz);
+  end;
+
+  case B1^ of
+    OP_EXACTLY: begin
+        case B2^ of
+          OP_EXACTLY: begin
+              Result := StrLComp(opnd1, opnd2, min(Len1, Len2)) <> 0;
+            end;
+          OP_EXACTLY_CI: begin
+              Len1 := min(Len1, Len2);
+
+              SetLength(s, Len1);
+              for i := 0 to Len1 - 1 do
+                PRegExprChar(s)[i] := _UpperCase(opnd1[i]);
+              Result := strlcomp(PRegExprChar(s), opnd2, Len1) <> 0;
+            end;
+          OP_ANYDIGIT: begin
+              Result := not IsDigitChar(opnd1^);
+            end;
+          OP_NOTDIGIT: begin
+              Result := IsDigitChar(opnd1^);
+            end;
+          OP_ANYSPACE: begin
+              Result := not IsSpaceChar(opnd1^);
+            end;
+          OP_NOTSPACE: begin
+              Result := IsSpaceChar(opnd1^);
+            end;
+          OP_ANYLETTER: begin
+              Result := not IsWordChar(opnd1^);
+            end;
+          OP_NOTLETTER: begin
+              Result := IsWordChar(opnd1^);
+            end;
+          OP_ANYLINEBREAK: begin
+              Result := not IsAnyLineBreak(opnd1^);
+            end;
+          OP_EOL: begin
+                Result := True;
+            end;
+        end;
+      end;
+    OP_EXACTLY_CI: begin
+        case B2^ of
+          OP_EXACTLY: begin
+              Len1 := min(Len1, Len2);
+
+              SetLength(s, Len1);
+              for i := 0 to Len1 - 1 do
+                PRegExprChar(s)[i] := _UpperCase(opnd2[i]);
+              Result := strlcomp(opnd1, PRegExprChar(s), Len1) <> 0;
+            end;
+          OP_EXACTLY_CI: begin
+              Result := StrLComp(opnd1, opnd2, min(Len1, Len2)) <> 0;
+            end;
+          OP_ANYDIGIT: begin
+              Result := not IsDigitChar(opnd1^);
+            end;
+          OP_NOTDIGIT: begin
+              Result := IsDigitChar(opnd1^);
+            end;
+          OP_ANYSPACE: begin
+              Result := not IsSpaceChar(opnd1^);
+            end;
+          OP_NOTSPACE: begin
+              Result := IsSpaceChar(opnd1^);
+        end;
+          OP_ANYLETTER: begin
+              Result := not IsWordChar(opnd1^);
+            end;
+          OP_NOTLETTER: begin
+              Result := IsWordChar(opnd1^);
+            end;
+          OP_ANYLINEBREAK: begin
+              Result := not IsAnyLineBreak(opnd1^);
+            end;
+          OP_EOL: begin
+                Result := True;
+            end;
+        end;
+      end;
+    OP_ANYDIGIT: begin
+        if (B2^ = OP_EXACTLY) or (B2^ = OP_EXACTLY_CI) then
+          Result := not IsDigitChar(opnd2^)
+        else
+          Result := (B2^ = OP_NOTDIGIT) or (B2^ = OP_ANYSPACE) or (B2^ = OP_ANYLETTER) or (B2^ = OP_ANYLINEBREAK);
+      end;
+    OP_NOTDIGIT: begin
+        if (B2^ = OP_EXACTLY) or (B2^ = OP_EXACTLY_CI) then
+          Result := IsDigitChar(opnd2^)
+        else
+        Result := (B2^ = OP_ANYDIGIT);
+      end;
+    OP_ANYSPACE: begin
+        if (B2^ = OP_EXACTLY) or (B2^ = OP_EXACTLY_CI) then
+          Result := not IsSpaceChar(opnd2^)
+        else
+        Result := (B2^ = OP_NOTSPACE) or (B2^ = OP_ANYDIGIT) or (B2^ = OP_ANYLETTER);
+      end;
+    OP_NOTSPACE: begin
+        if (B2^ = OP_EXACTLY) or (B2^ = OP_EXACTLY_CI) then
+          Result := IsSpaceChar(opnd2^)
+        else
+        Result := (B2^ = OP_ANYSPACE);
+      end;
+    OP_ANYLETTER: begin
+        if (B2^ = OP_EXACTLY) or (B2^ = OP_EXACTLY_CI) then
+          Result := not IsWordChar(opnd2^)
+        else
+          Result := (B2^ = OP_NOTLETTER) or (B2^ = OP_ANYDIGIT) or (B2^ = OP_ANYSPACE) or (B2^ = OP_ANYLINEBREAK);
+      end;
+    OP_NOTLETTER: begin
+        if (B2^ = OP_EXACTLY) or (B2^ = OP_EXACTLY_CI) then
+          Result := IsWordChar(opnd2^)
+        else
+        Result := (B2^ = OP_ANYLETTER);
+      end;
+    OP_ANYLINEBREAK: begin
+        if (B2^ = OP_EXACTLY) or (B2^ = OP_EXACTLY_CI) then
+          Result := not IsAnyLineBreak(opnd2^)
+        else
+          Result := (B2^ = OP_ANYDIGIT) or (B2^ = OP_ANYLETTER);
+      end;
+    OP_EOL: begin
+          Result := (B2^ = OP_EXACTLY) or (B2^ = OP_EXACTLY_CI) or
+                    (B2^ = OP_NOTSPACE) or (B2^ = OP_NOTLETTER) or (B2^ = OP_NOTDIGIT) or
+                    (B2^ = OP_ANYSPACE) or (B2^ = OP_ANYLETTER) or (B2^ = OP_ANYDIGIT) or (B2^ = OP_ANYLINEBREAK);
+      end;
+  end;
+end;
+
 function FindSkippedMetaLen(PStart, PEnd: PRegExprChar): Integer; {$IFDEF InlineFuncs}inline;{$ENDIF}
 // find length of initial segment of PStart string consisting
 // entirely of characters not from IsMetaSymbol1.
@@ -3267,7 +3571,7 @@ function TRegExpr.DoParseReg(InBrackets, IndexBrackets: Boolean;
 // is a trifle forced, but the need to tie the tails of the branches to what
 // follows makes it hard to avoid.
 var
-  ret, br, ender, brStart, brWork: PRegExprChar;
+  ret, br, ender, brStart, brWork, brWork2: PRegExprChar;
   NBrackets: Integer;
   FlagTemp: Integer;
   SavedModifiers: TRegExprModifiers;
@@ -3351,12 +3655,52 @@ begin
     br := regNext(br);
   end;
 
-  if fSecondPass and (brWork = brStart) then begin
-    brWork^ := OP_COMMENT;
-    PRENextOff(AlignToPtr(brWork + REOpSz))^ := REOpSz + RENextOffSz;
-    if ret = brWork then
-      ret := regSucc(brWork);
-  end;
+  if fSecondPass then begin
+    if (brWork = brStart) then begin
+      brWork^ := OP_COMMENT;
+      PRENextOff(AlignToPtr(brWork + REOpSz))^ := REOpSz + RENextOffSz;
+      if ret = brWork then
+        ret := regSucc(brWork);
+    end
+
+    else
+    begin
+      brWork := brStart;
+      brWork := regNext(brWork);
+      Assert(brWork^=OP_BRANCH);
+
+      while brWork^ = OP_BRANCH do begin
+        brWork2 := brStart;
+        while brWork2 < brWork do begin
+          Assert(brWork2^=OP_BRANCH);
+          if not CompareBanches(regSucc(brWork), regSucc(brWork2)) then begin
+            brWork := nil;
+            break;
+          end;
+
+
+          brWork2 := regNext(brWork2);
+        end;
+        if brWork = nil then
+          break;
+        brWork := regNext(brWork);
+      end;
+
+      if brWork <> nil then begin
+        // All muttally exclussive
+        brStart^ := OP_BRANCH_UNIQUE;
+        InsertOperator(OP_BRANCH_UNIQUE_DONE, ender, REOpSz + RENextOffSz);
+        brWork := ender;
+        ender := ender + REOpSz + RENextOffSz;
+        Tail(brWork, ender);
+        Tail(ret, ender); // update the last branch
+      end;
+    end;
+  end
+  else
+    EmitNode(OP_BRANCH_UNIQUE_DONE); // reserve memory, just in case
+
+
 
   // Check for proper termination.
   if InBrackets then
@@ -5350,6 +5694,9 @@ type
       OP_SUBCALL: (
         savedCurrentSubCalled: Integer;
       );
+      OP_BRANCH: (
+        savedBranchUniqueDone: Boolean;
+      );
   end;
 
 function TRegExpr.MatchPrim(prog: PRegExprChar): Boolean;
@@ -5967,25 +6314,53 @@ begin
           Exit;
         end;
 
-      OP_BRANCH:
+      OP_BRANCH_UNIQUE_DONE:
+        BranchUniqueDone := True;
+
+      OP_BRANCH_UNIQUE:
         begin
+          Local.savedBranchUniqueDone := BranchUniqueDone;
+          BranchUniqueDone := False;
           repeat
             save := regInput;
             Result := MatchPrim(scan + REOpSz + RENextOffSz);
             if Result then
-              Exit;
+              break;
             // if branch worked until OP_CLOSE, and marked atomic group as "done", then exit
             regInput := save;
-            if IsBacktrackingGroupAsAtom then
-              Exit;
+            if IsBacktrackingGroupAsAtom or BranchUniqueDone then
+              break;
             scan := next;
             Assert(scan <> nil);
             next := regNextQuick(scan);
             if  (next^ <> OP_BRANCH) then
               break;
           until  False;
+          BranchUniqueDone := Local.savedBranchUniqueDone;
           next := scan  + REOpSz + RENextOffSz;
         end;
+
+      OP_BRANCH:
+        begin
+          saveCurrentGrp := regCurrentGrp;
+            repeat
+              save := regInput;
+              Result := MatchPrim(scan + REOpSz + RENextOffSz);
+              regCurrentGrp := saveCurrentGrp;
+              if Result then
+              break;
+              // if branch worked until OP_CLOSE, and marked atomic group as "done", then exit
+              regInput := save;
+            if IsBacktrackingGroupAsAtom then
+              break;
+              scan := next;
+              Assert(scan <> nil);
+              next := regNextQuick(scan);
+              if  (next^ <> OP_BRANCH) then
+                break;
+            until  False;
+            next := scan  + REOpSz + RENextOffSz;
+          end;
 
       {$IFDEF ComplexBraces}
       OP_LOOPENTRY:
@@ -7123,7 +7498,9 @@ begin
       OP_LOOKAROUND_OPTIONAL:
         ;
 
-      OP_BRANCH:
+      OP_BRANCH_UNIQUE_DONE:
+        ;
+      OP_BRANCH, OP_BRANCH_UNIQUE:
         begin
           repeat
             FillFirstCharSet(scan + REOpSz + RENextOffSz);
@@ -7403,6 +7780,10 @@ begin
       Result := 'ANYOF_CI';
     OP_ANYBUT_CI:
       Result := 'ANYBUT_CI';
+    OP_BRANCH_UNIQUE:
+      Result := 'BRANCH_UNIQUE';
+    OP_BRANCH_UNIQUE_DONE:
+      Result := 'BRANCH_UNIQUE_DONE';
     OP_BRANCH:
       Result := 'BRANCH';
     OP_EXACTLY:
@@ -7821,7 +8202,9 @@ begin
           Exit;
         end;
 
-      OP_BRANCH:
+      OP_BRANCH_UNIQUE_DONE:
+        continue;
+      OP_BRANCH, OP_BRANCH_UNIQUE:
         begin
           if next^ = OP_BRANCH then begin
             if not IsPartFixedLength(s, op, ABranchLen, ABranchMaxLen, OP_EEND, next, []) then

@@ -578,6 +578,10 @@ type
     function regNext(p: PRegExprChar): PRegExprChar;
     function regNextQuick(p: PRegExprChar): PRegExprChar; {$IFDEF FPC}inline;{$ENDIF}
 
+    // Successor in stream, don't follow next pointer
+    // Only for simple Operators that have no data
+    function regSucc(p: PRegExprChar): PRegExprChar; {$IFDEF InlineFuncs}inline;{$ENDIF}
+
     // dig the "last" pointer out of a chain of node
     function regLast(p: PRegExprChar): PRegExprChar;
 
@@ -3169,10 +3173,10 @@ begin
     regMustLen := 0;
     regMustString := '';
 
-    scan := regCodeWork; // First OP_BRANCH.
-    if PREOp(regNext(scan))^ = OP_EEND then
+    scan := regCodeWork; // First OP_BRANCH or OP_COMMENT
+    if PREOp(scan)^ = OP_COMMENT then // Opening Branch had no alternatives
     begin // Only one top-level choice.
-      scan := scan + REOpSz + RENextOffSz;
+      scan := regSucc(scan);
 
       // Starting-point info.
       if PREOp(scan)^ = OP_BOL then
@@ -3263,7 +3267,7 @@ function TRegExpr.DoParseReg(InBrackets, IndexBrackets: Boolean;
 // is a trifle forced, but the need to tie the tails of the branches to what
 // follows makes it hard to avoid.
 var
-  ret, br, ender: PRegExprChar;
+  ret, br, ender, brStart, brWork: PRegExprChar;
   NBrackets: Integer;
   FlagTemp: Integer;
   SavedModifiers: TRegExprModifiers;
@@ -3298,6 +3302,7 @@ begin
 
   // Pick up the branches, linking them together.
   br := ParseBranch(FlagTemp);
+  brStart := br;
   if br = nil then
   begin
     Result := nil;
@@ -3336,12 +3341,21 @@ begin
     ender := EmitNode(OP_EEND);
   Tail(ret, ender);
 
+  brWork := br;
+
   // Hook the tails of the branches to the closing node.
   br := ret;
   while br <> nil do
   begin
     OpTail(br, ender);
     br := regNext(br);
+  end;
+
+  if fSecondPass and (brWork = brStart) then begin
+    brWork^ := OP_COMMENT;
+    PRENextOff(AlignToPtr(brWork + REOpSz))^ := REOpSz + RENextOffSz;
+    if ret = brWork then
+      ret := regSucc(brWork);
   end;
 
   // Check for proper termination.
@@ -5289,6 +5303,11 @@ begin
   {$ENDIF}
 end;
 
+function TRegExpr.regSucc(p: PRegExprChar): PRegExprChar;
+begin
+  Result := p + REOpSz + RENextOffSz;
+end;
+
 function TRegExpr.regLast(p: PRegExprChar): PRegExprChar;
 var
   temp: PRegExprChar;
@@ -5950,28 +5969,22 @@ begin
 
       OP_BRANCH:
         begin
-          if (next^ <> OP_BRANCH) // No next choice in group
-          then
-            next := scan + REOpSz + RENextOffSz // Avoid recursion
-          else
-          begin
-            repeat
-              save := regInput;
-              Result := MatchPrim(scan + REOpSz + RENextOffSz);
-              if Result then
-                Exit;
-              // if branch worked until OP_CLOSE, and marked atomic group as "done", then exit
-              regInput := save;
-              if IsBacktrackingGroupAsAtom then
-                Exit;
-              scan := next;
-              Assert(scan <> nil);
-              next := regNextQuick(scan);
-              if  (next^ <> OP_BRANCH) then
-                break;
-            until  False;
-            next := scan  + REOpSz + RENextOffSz;
-          end;
+          repeat
+            save := regInput;
+            Result := MatchPrim(scan + REOpSz + RENextOffSz);
+            if Result then
+              Exit;
+            // if branch worked until OP_CLOSE, and marked atomic group as "done", then exit
+            regInput := save;
+            if IsBacktrackingGroupAsAtom then
+              Exit;
+            scan := next;
+            Assert(scan <> nil);
+            next := regNextQuick(scan);
+            if  (next^ <> OP_BRANCH) then
+              break;
+          until  False;
+          next := scan  + REOpSz + RENextOffSz;
         end;
 
       {$IFDEF ComplexBraces}
@@ -7112,17 +7125,11 @@ begin
 
       OP_BRANCH:
         begin
-          if (PREOp(Next)^ <> OP_BRANCH) // No choice.
-          then
-            Next := scan + REOpSz + RENextOffSz // Avoid recursion.
-          else
-          begin
-            repeat
-              FillFirstCharSet(scan + REOpSz + RENextOffSz);
-              scan := regNextQuick(scan);
-            until (scan = nil) or (PREOp(scan)^ <> OP_BRANCH);
-            Exit;
-          end;
+          repeat
+            FillFirstCharSet(scan + REOpSz + RENextOffSz);
+            scan := regNextQuick(scan);
+          until (scan = nil) or (PREOp(scan)^ <> OP_BRANCH);
+          Exit;
         end;
 
       {$IFDEF ComplexBraces}

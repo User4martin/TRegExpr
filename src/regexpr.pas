@@ -2729,11 +2729,58 @@ end; { of procedure TRegExpr.InsertOperator
   -------------------------------------------------------------- }
 
 function TRegExpr.CompareBanches(B1, B2: PRegExprChar): Boolean;
+  function CompChar(Ch1: REChar; Br2: PRegExprChar): boolean;
+  begin
+    case Br2^ of
+      //OP_EXACTLY: begin
+      //    Len1 := min(Len1, Len2);
+      //
+      //    SetLength(s, Len1);
+      //    for i := 0 to Len1 - 1 do
+      //      PRegExprChar(s)[i] := _UpperCase(opnd2[i]);
+      //    Result := strlcomp(Ch1, PRegExprChar(s), Len1) <> 0;
+      //  end;
+      //OP_EXACTLY_CI: begin
+      //    Result := StrLComp(Ch1, opnd2, min(Len1, Len2)) <> 0;
+      //  end;
+      OP_ANYDIGIT: begin
+          Result := not IsDigitChar(Ch1);
+        end;
+      OP_NOTDIGIT: begin
+          Result := IsDigitChar(Ch1);
+        end;
+      OP_ANYSPACE: begin
+          Result := not IsSpaceChar(Ch1);
+        end;
+      OP_NOTSPACE: begin
+          Result := IsSpaceChar(Ch1);
+    end;
+      OP_ANYLETTER: begin
+          Result := not IsWordChar(Ch1);
+        end;
+      OP_NOTLETTER: begin
+          Result := IsWordChar(Ch1);
+        end;
+      OP_ANYLINEBREAK: begin
+          Result := not IsAnyLineBreak(Ch1);
+        end;
+      OP_EOL: begin
+            Result := True;
+        end;
+    OP_ANYBUT, OP_ANYBUT_CI,
+    OP_ANYOF, OP_ANYOF_CI:
+      result := false;
+
+    end;
+  end;
+
 var
   opnd1, opnd2: PRegExprChar;
-  Len1, Len2: LongInt;
+  Len1, Len2, N: LongInt;
   s: RegExprString;
   i: Integer;
+  NonCaseSense: Boolean;
+  ch1, ch2, ch: Char;
 begin
   // returns True, if the 2 branches are mutally exclusive
   // OP_NOTHING leads to result=false => in case of loops with OP_BACK
@@ -2754,7 +2801,7 @@ begin
         (B1^ = OP_BOUND) or
         (B1^ = OP_NOTBOUND)
   do begin
-    if  (B1^ = OP_LOOKAHEAD) or (B1^ = OP_LOOKAHEAD_NEG) then begin
+    if  (B1^ = OP_LOOKAHEAD) {or (B1^ = OP_LOOKAHEAD_NEG)} then begin
       Result := CompareBanches(regSucc(B1), B2);
       B1 := regNext(B1);
       assert((B1^ = OP_LOOKAHEAD_END) or (B1^ = OP_LOOKBEHIND_END));
@@ -2801,7 +2848,7 @@ begin
         (B2^ = OP_BOUND) or
         (B2^ = OP_NOTBOUND)
   do begin
-    if  (B2^ = OP_LOOKAHEAD) or (B2^ = OP_LOOKAHEAD_NEG) then begin
+    if  (B2^ = OP_LOOKAHEAD) {or (B2^ = OP_LOOKAHEAD_NEG)} then begin
       Result := CompareBanches(B1, regSucc(B2));
       B2 := regNext(B2);
       assert((B2^ = OP_LOOKAHEAD_END) or (B2^ = OP_LOOKBEHIND_END));
@@ -3029,6 +3076,60 @@ begin
                     (B2^ = OP_NOTSPACE) or (B2^ = OP_NOTLETTER) or (B2^ = OP_NOTDIGIT) or
                     (B2^ = OP_ANYSPACE) or (B2^ = OP_ANYLETTER) or (B2^ = OP_ANYDIGIT) or (B2^ = OP_ANYLINEBREAK);
       end;
+    OP_ANYOF, OP_ANYOF_CI: begin
+      B1 := regSucc(B1);
+      NonCaseSense := B1^ = OP_ANYOF_CI;
+      while B1^ <> OpKind_End do begin
+        case B1^ of
+          OpKind_MetaClass:
+            exit;
+          OpKind_Range: begin
+              Inc(B1);
+              ch1 := B1^;
+              Inc(B1);
+              ch2 := B1^;
+              Inc(B1);
+              for ch := ch1 to ch2 do
+                if NonCaseSense then
+                  if not CompChar(_UpperCase(ch), B2) then
+                    exit
+                  else
+                  if not CompChar(ch, B2) then
+                    exit;
+            end;
+          OpKind_Char: begin
+              Inc(B1);
+              N := PLongInt(B1)^;
+              Inc(B1, RENumberSz);
+              for i := 1 to N do
+              begin
+                ch := B1^;
+                Inc(B1);
+                if NonCaseSense then
+                  if not CompChar(_UpperCase(ch), B2) then
+                    exit
+                  else
+                  if not CompChar(ch, B2) then
+                    exit;
+              end;
+            end;
+          OpKind_CategoryYes,OpKind_CategoryNo:
+            exit;
+          else
+            exit;
+        end;
+
+      end;
+
+      if (B1^ = OpKind_End) then
+        result := True;
+
+      end;
+    OP_ANYBUT, OP_ANYBUT_CI: begin
+      end;
+    else
+      if (B2 = OP_ANYOF) or (B2 = OP_ANYOF_CI) or (B2 = OP_ANYBUT) or (B2 = OP_ANYBUT_CI) then
+        Result := CompareBanches(B2, B1);
   end;
 end;
 
@@ -3772,6 +3873,10 @@ begin
           if CompareBanches(regSucc(previous)+REBracesArgSz, latest) then
             PREOp(previous)^ := OP_BRACES_POSS;
         end;
+//        OP_LOOPENTRY: begin
+//          if CompareBanches(regSucc(previous), latest) then
+//            PREOp(previous)^ := OP_LOOPENTRY;
+//        end;
       end;
     end;
 
